@@ -544,6 +544,13 @@ input[type="number"] {
     transition: width 0.5s, height 0.5s;
 }
 
+.btn:focus-visible,
+.preset-card:focus-visible,
+.btn-remove-stop:focus-visible {
+    outline: 3px solid var(--accent-primary);
+    outline-offset: 3px;
+}
+
 .btn:active::before {
     width: 300px;
     height: 300px;
@@ -776,6 +783,14 @@ input[type="number"] {
     z-index: 10;
 }
 
+.palette-swatch:focus-visible {
+    outline: 3px solid var(--accent-primary);
+    outline-offset: 3px;
+    transform: scale(1.1);
+    box-shadow: var(--shadow-lg);
+    z-index: 10;
+}
+
 .palette-swatch::after {
     content: attr(data-tooltip);
     position: absolute;
@@ -955,6 +970,34 @@ input[type="number"] {
 
 @keyframes spin {
     to { transform: rotate(360deg); }
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+
+    body::before,
+    body::after {
+        animation: none !important;
+    }
+
+    .glass-panel,
+    .sidebar,
+    .gradient-preview-card,
+    .preset-card,
+    .tab-btn,
+    .palette-swatch,
+    .toast {
+        animation: none !important;
+        transition-duration: 0.001ms !important;
+    }
 }
 
 
