@@ -499,6 +499,17 @@ input[type="range"]::-moz-range-thumb {
     box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
 }
 
+.control-input.invalid,
+.control-input[aria-invalid="true"] {
+    border-color: var(--danger);
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2);
+}
+
+.control-input.invalid:focus,
+.control-input[aria-invalid="true"]:focus {
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.3);
+}
+
 input[type="number"] {
     width: 80px;
 }
