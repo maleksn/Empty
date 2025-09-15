@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gradient Studio Pro</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="app.js" defer></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="glass-panel sidebar-section">
+                <header class="sidebar-header">
+                    <h2>Presets</h2>
+                </header>
+                <div class="presets-grid" aria-label="Gradient presets"></div>
+            </div>
+            <div class="glass-panel sidebar-actions">
+                <button class="btn btn-secondary" id="randomize-btn">Randomize</button>
+                <button class="btn btn-secondary" id="save-image-btn">Save Image</button>
+                <button class="btn btn-secondary" id="export-css-btn">Export CSS</button>
+            </div>
+        </aside>
+
+        <!-- Main content -->
+        <main class="main-content">
+            <header class="main-header glass-panel">
+                <div class="logo">
+                    <div class="logo-icon">🎨</div>
+                    <h1>Gradient Studio Pro</h1>
+                </div>
+                <nav class="gradient-type-tabs" role="tablist" aria-label="Gradient type">
+                    <button role="tab" aria-selected="true" id="type-linear" class="tab-btn active"><span>Linear</span></button>
+                    <button role="tab" aria-selected="false" id="type-radial" class="tab-btn"><span>Radial</span></button>
+                    <button role="tab" aria-selected="false" id="type-conic" class="tab-btn"><span>Conic</span></button>
+                </nav>
+            </header>
+
+            <section class="preview-section glass-panel">
+                <div id="gradient-preview" class="gradient-preview-card">
+                    <span class="preview-label">Gradient Preview</span>
+                </div>
+                <div class="css-output-container">
+                    <code id="css-output">...</code>
+                    <button id="copy-css-btn" class="btn btn-primary copy-btn">Copy CSS</button>
+                </div>
+            </section>
+
+            <div style="display: flex; gap: 24px;">
+                <section class="controls-section glass-panel" style="flex: 2;">
+                    <div class="control-group" id="angle-control-group">
+                        <label for="angle-slider">Angle</label>
+                        <div class="input-group">
+                            <input type="range" id="angle-slider" min="0" max="360" value="90">
+                            <input type="number" id="angle-input" min="0" max="360" value="90" class="control-input">
+                        </div>
+                    </div>
+                    
+                    <div class="control-group">
+                        <h3>Color Stops</h3>
+                        <div id="stops-container"></div>
+                        <button id="add-stop-btn" class="btn btn-secondary">+ Add Stop</button>
+                    </div>
+
+                    <div class="control-group" id="blur-control-group">
+                        <label for="blur-slider">Blur</label>
+                        <div class="input-group">
+                            <input type="range" id="blur-slider" min="0" max="40" value="0">
+                            <input type="number" id="blur-input" min="0" max="40" value="0" class="control-input">
+                        </div>
+                    </div>
+
+                    <div class="control-group" id="noise-control-group">
+                        <label for="noise-slider">Noise</label>
+                        <div class="input-group">
+                            <input type="range" id="noise-slider" min="0" max="100" value="0">
+                            <input type="number" id="noise-input" min="0" max="100" value="0" class="control-input">
+                        </div>
+                    </div>
+                </section>
+                
+                <section class="palette-section glass-panel" style="flex: 1;">
+                    <div class="palette-header">
+                        <h3>Color Schemes</h3>
+                        <select id="palette-select" class="control-input">
+                            <option value="tailwind">Tailwind CSS</option>
+                            <option value="material">Material Design</option>
+                        </select>
+                    </div>
+                    <div id="palette-grid" class="palette-grid">
+                        <!-- Color swatches will be injected here by app.js -->
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+    <div id="toast-container" class="toast-container" aria-live="assertive"></div>
+    <dialog id="export-modal" class="modal">
+        <header class="modal-header">
+            <h2>Export Image</h2>
+            <button id="close-modal-btn" class="btn-remove-stop">&times;</button>
+        </header>
+        <div class="modal-content">
+            <div class="control-group">
+                <label>Format</label>
+                <div class="radio-group">
+                    <label><input type="radio" name="format" value="png" checked> PNG</label>
+                    <label><input type="radio" name="format" value="jpg"> JPG</label>
+                    <label><input type="radio" name="format" value="svg"> SVG</label>
+                </div>
+            </div>
+            <div class="control-group">
+                <label>Resolution</label>
+                <div class="radio-group">
+                    <label><input type="radio" name="resolution" value="1080p" checked> 1080p</label>
+                    <label><input type="radio" name="resolution" value="4k"> 4K</label>
+                </div>
+            </div>
+        </div>
+        <footer class="modal-actions">
+            <button id="cancel-export-btn" class="btn btn-secondary">Cancel</button>
+            <button id="confirm-export-btn" class="btn btn-primary">Export</button>
+        </footer>
+    </dialog>
+</body>
+</html>
