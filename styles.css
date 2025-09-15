@@ -193,6 +193,22 @@ body::after {
     background-clip: text;
 }
 
+.sidebar-subtext {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+}
+
+.empty-state {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    padding: 12px;
+    border-radius: var(--border-radius-sm);
+    background: var(--panel-bg);
+    border: 1px dashed var(--panel-border);
+    margin-bottom: 16px;
+}
+
 /* Main content */
 .main-content {
     flex-grow: 1;
@@ -499,6 +515,17 @@ input[type="range"]::-moz-range-thumb {
     box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
 }
 
+.control-input.invalid,
+.control-input[aria-invalid="true"] {
+    border-color: var(--danger);
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2);
+}
+
+.control-input.invalid:focus,
+.control-input[aria-invalid="true"]:focus {
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.3);
+}
+
 input[type="number"] {
     width: 80px;
 }
@@ -533,6 +560,13 @@ input[type="number"] {
     transition: width 0.5s, height 0.5s;
 }
 
+.btn:focus-visible,
+.preset-card:focus-visible,
+.btn-remove-stop:focus-visible {
+    outline: 3px solid var(--accent-primary);
+    outline-offset: 3px;
+}
+
 .btn:active::before {
     width: 300px;
     height: 300px;
@@ -559,6 +593,22 @@ input[type="number"] {
     background: var(--panel-border);
     transform: translateY(-2px);
     box-shadow: var(--shadow-md);
+}
+
+.btn-tertiary {
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px dashed var(--panel-border);
+    padding: 10px 18px;
+    font-size: 0.85rem;
+}
+
+.btn-tertiary:hover {
+    border-style: solid;
+    border-color: var(--accent-primary);
+    color: var(--text-primary);
+    box-shadow: var(--shadow-sm);
+    transform: translateY(-1px);
 }
 
 .btn-icon {
@@ -612,6 +662,13 @@ input[type="number"] {
     border-color: var(--accent-primary);
     background: var(--panel-glass);
     box-shadow: var(--shadow-md), 0 0 20px rgba(102, 126, 234, 0.2);
+}
+
+.stop-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 16px;
 }
 
 .stop-color-input {
@@ -687,6 +744,18 @@ input[type="number"] {
     gap: 12px;
 }
 
+.custom-presets-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.custom-preset-item {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
 .preset-card {
     height: 80px;
     border-radius: var(--border-radius-md);
@@ -731,6 +800,23 @@ input[type="number"] {
     text-shadow: 0 2px 4px rgba(0,0,0,0.5);
 }
 
+.preset-delete-btn {
+    align-self: flex-start;
+    padding: 6px 12px;
+    font-size: 0.75rem;
+    border-radius: var(--border-radius-sm);
+    border: 1px solid var(--panel-border);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.preset-delete-btn:hover {
+    color: var(--danger);
+    border-color: var(--danger);
+}
+
 /* Palette Section */
 .palette-section {
     padding: 24px;
@@ -761,6 +847,14 @@ input[type="number"] {
 
 .palette-swatch:hover {
     transform: scale(1.2) rotate(5deg);
+    box-shadow: var(--shadow-lg);
+    z-index: 10;
+}
+
+.palette-swatch:focus-visible {
+    outline: 3px solid var(--accent-primary);
+    outline-offset: 3px;
+    transform: scale(1.1);
     box-shadow: var(--shadow-lg);
     z-index: 10;
 }
@@ -867,6 +961,15 @@ input[type="number"] {
     backdrop-filter: blur(8px);
 }
 
+.modal-form {
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-form .modal-content {
+    flex-grow: 1;
+}
+
 .modal-header {
     display: flex;
     justify-content: space-between;
@@ -899,6 +1002,12 @@ input[type="number"] {
     padding: 24px;
     background: var(--panel-bg);
     border-top: 1px solid var(--panel-border);
+}
+
+.form-hint {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    line-height: 1.4;
 }
 
 .radio-group {
@@ -944,6 +1053,34 @@ input[type="number"] {
 
 @keyframes spin {
     to { transform: rotate(360deg); }
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+
+    body::before,
+    body::after {
+        animation: none !important;
+    }
+
+    .glass-panel,
+    .sidebar,
+    .gradient-preview-card,
+    .preset-card,
+    .tab-btn,
+    .palette-swatch,
+    .toast {
+        animation: none !important;
+        transition-duration: 0.001ms !important;
+    }
 }
 
 

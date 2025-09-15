@@ -2,22 +2,18 @@
 (function() {
     'use strict';
 
+    const GRADIENT_TYPES = new Set(['linear', 'radial', 'conic']);
+    const HEX_COLOR_REGEX = /^#(?:[0-9a-f]{3}){1,2}$/i;
+    const CUSTOM_PRESETS_STORAGE_KEY = 'custom-gradient-presets';
+    const MAX_CUSTOM_PRESETS = 20;
+
     // ===================================================================
     // CONFIGURATION AND STATE
     // ===================================================================
-    const gradient = {
-        type: 'linear', 
-        angle: 90, 
-        shape: 'ellipse',
-        stops: [
-            { color: '#2b8efb', pos: 0 }, 
-            { color: '#1fc8a1', pos: 100 }
-        ],
-        blur: 0, 
-        noise: 0
-    };
+    const gradient = createDefaultGradientState();
     
     let presets = [];
+    let customPresets = [];
     let activeStopIndex = 0;
 
     const COLOR_PALETTES = {
@@ -68,7 +64,18 @@
         noiseSlider: null,
         noiseInput: null,
         paletteSelect: null,
-        paletteGrid: null
+        paletteGrid: null,
+        customPresetsGrid: null,
+        customPresetsEmpty: null,
+        savePresetBtn: null,
+        savePresetModal: null,
+        savePresetForm: null,
+        savePresetNameInput: null,
+        savePresetCancelBtn: null,
+        savePresetConfirmBtn: null,
+        closeSavePresetBtn: null,
+        reverseStopsBtn: null,
+        distributeStopsBtn: null
     };
 
     // ===================================================================
@@ -101,10 +108,23 @@
         els.noiseInput = document.getElementById('noise-input');
         els.paletteSelect = document.getElementById('palette-select');
         els.paletteGrid = document.getElementById('palette-grid');
+        els.customPresetsGrid = document.getElementById('custom-presets-grid');
+        els.customPresetsEmpty = document.getElementById('custom-presets-empty');
+        els.savePresetBtn = document.getElementById('save-preset-btn');
+        els.savePresetModal = document.getElementById('save-preset-modal');
+        els.savePresetForm = document.getElementById('save-preset-form');
+        els.savePresetNameInput = document.getElementById('save-preset-name');
+        els.savePresetCancelBtn = document.getElementById('cancel-save-preset-btn');
+        els.savePresetConfirmBtn = document.getElementById('confirm-save-preset-btn');
+        els.closeSavePresetBtn = document.getElementById('close-save-preset-btn');
+        els.reverseStopsBtn = document.getElementById('reverse-stops-btn');
+        els.distributeStopsBtn = document.getElementById('distribute-stops-btn');
 
         loadState();
         presets = getDefaultPresets();
+        customPresets = loadCustomPresets();
         renderPresets();
+        renderCustomPresets();
         renderPalettes(els.paletteSelect.value);
         bindUI();
         syncUIFromState();
@@ -115,34 +135,41 @@
     // UI RENDERING & UPDATES
     // ===================================================================
     function updatePreview() {
-        const css = generateGradientCSS(gradient);
+        const safeGradient = sanitizeGradientState(gradient);
+        const css = generateGradientCSS(safeGradient);
         const bgValue = css.replace('background: ', '').slice(0, -1);
-        
+
         els.previewEl.style.setProperty('--preview-bg', bgValue);
-        els.previewEl.style.setProperty('--preview-filter', `blur(${gradient.blur}px)`);
-        els.previewEl.style.setProperty('--preview-noise-opacity', gradient.noise / 100);
-        
+        els.previewEl.style.setProperty('--preview-filter', `blur(${safeGradient.blur}px)`);
+        els.previewEl.style.setProperty('--preview-noise-opacity', safeGradient.noise / 100);
+
         els.cssOutputEl.textContent = css;
-        ensureReadableTextColorOnPreview();
+        ensureReadableTextColorOnPreview(safeGradient);
     }
 
     function syncUIFromState() {
+        applySanitizedState(gradient, gradient);
+        if (!Number.isInteger(activeStopIndex) || activeStopIndex < 0) {
+            activeStopIndex = 0;
+        }
+        activeStopIndex = Math.min(activeStopIndex, gradient.stops.length - 1);
+
         // Update type tabs
         els.typeTabs.querySelectorAll('.tab-btn').forEach(btn => {
             btn.classList.toggle('active', btn.id === `type-${gradient.type}`);
         });
-        
+
         // Update angle controls
         els.angleControlGroup.style.display = gradient.type === 'radial' ? 'none' : 'block';
         els.angleSlider.value = gradient.angle;
         els.angleInput.value = gradient.angle;
-        
+
         // Update effect controls
         els.blurSlider.value = gradient.blur;
         els.blurInput.value = gradient.blur;
         els.noiseSlider.value = gradient.noise;
         els.noiseInput.value = gradient.noise;
-        
+
         renderStops();
     }
 
@@ -151,15 +178,48 @@
         gradient.stops.forEach((stop, index) => {
             const stopRow = document.createElement('div');
             stopRow.className = 'stop-row';
-            stopRow.classList.toggle('active', index === activeStopIndex);
-            stopRow.dataset.index = index;
-            stopRow.innerHTML = `
-                <input type="color" class="stop-color-input" data-index="${index}" value="${stop.color}">
-                <input type="text" class="stop-hex-input control-input" data-index="${index}" value="${stop.color}">
-                <input type="range" class="stop-pos-slider" data-index="${index}" min="0" max="100" value="${stop.pos}">
-                <span class="stop-pos-label">${stop.pos}%</span>
-                <button class="btn-remove-stop" data-index="${index}" aria-label="Remove stop ${index + 1}">&times;</button>
-            `;
+            stopRow.dataset.index = String(index);
+            if (index === activeStopIndex) {
+                stopRow.classList.add('active');
+            }
+
+            const colorInput = document.createElement('input');
+            colorInput.type = 'color';
+            colorInput.className = 'stop-color-input';
+            colorInput.dataset.index = String(index);
+            colorInput.value = stop.color;
+            colorInput.setAttribute('aria-label', `Color picker for stop ${index + 1}`);
+
+            const hexInput = document.createElement('input');
+            hexInput.type = 'text';
+            hexInput.className = 'stop-hex-input control-input';
+            hexInput.dataset.index = String(index);
+            hexInput.value = stop.color;
+            hexInput.setAttribute('maxlength', '7');
+            hexInput.setAttribute('spellcheck', 'false');
+            hexInput.setAttribute('autocomplete', 'off');
+            hexInput.setAttribute('aria-label', `Hex value for stop ${index + 1}`);
+
+            const slider = document.createElement('input');
+            slider.type = 'range';
+            slider.className = 'stop-pos-slider';
+            slider.dataset.index = String(index);
+            slider.min = '0';
+            slider.max = '100';
+            slider.value = stop.pos;
+
+            const label = document.createElement('span');
+            label.className = 'stop-pos-label';
+            label.textContent = `${stop.pos}%`;
+
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'btn-remove-stop';
+            removeBtn.dataset.index = String(index);
+            removeBtn.setAttribute('aria-label', `Remove stop ${index + 1}`);
+            removeBtn.type = 'button';
+            removeBtn.textContent = '×';
+
+            stopRow.append(colorInput, hexInput, slider, label, removeBtn);
             els.stopsContainer.appendChild(stopRow);
         });
     }
@@ -169,32 +229,114 @@
         presets.forEach((preset, index) => {
             const card = document.createElement('button');
             card.className = 'preset-card';
-            const css = generateGradientCSS(preset);
+            card.type = 'button';
+            const css = generateGradientCSS(sanitizeGradientState(preset));
             card.style.background = css.replace('background: ', '').slice(0, -1);
-            card.dataset.index = index;
-            card.innerHTML = `<span class="preset-name">${preset.name}</span>`;
+            card.dataset.index = String(index);
+            card.dataset.section = 'default';
+            card.setAttribute('aria-label', `${preset.name} gradient preset`);
+            card.title = `${preset.name} gradient preset`;
+
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'preset-name';
+            nameSpan.textContent = preset.name;
+            card.appendChild(nameSpan);
+
             els.presetsGrid.appendChild(card);
+        });
+    }
+
+    function renderCustomPresets() {
+        if (!els.customPresetsGrid) {
+            return;
+        }
+
+        els.customPresetsGrid.innerHTML = '';
+
+        if (els.customPresetsEmpty) {
+            els.customPresetsEmpty.hidden = customPresets.length > 0;
+        }
+
+        customPresets.forEach((preset, index) => {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'custom-preset-item';
+
+            const card = document.createElement('button');
+            card.className = 'preset-card';
+            card.type = 'button';
+            card.dataset.index = String(index);
+            card.dataset.section = 'custom';
+            const css = generateGradientCSS(sanitizeGradientState(preset));
+            card.style.background = css.replace('background: ', '').slice(0, -1);
+            const name = typeof preset.name === 'string' && preset.name.trim()
+                ? preset.name.trim()
+                : `Custom Preset ${index + 1}`;
+            card.setAttribute('aria-label', `${name} custom gradient preset`);
+            card.title = `${name} custom gradient preset`;
+
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'preset-name';
+            nameSpan.textContent = name;
+            card.appendChild(nameSpan);
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'preset-delete-btn';
+            deleteBtn.type = 'button';
+            deleteBtn.dataset.index = String(index);
+            deleteBtn.textContent = 'Delete';
+            deleteBtn.setAttribute('aria-label', `Delete custom preset ${name}`);
+
+            wrapper.append(card, deleteBtn);
+            els.customPresetsGrid.appendChild(wrapper);
         });
     }
 
     function renderPalettes(paletteName) {
         const palette = COLOR_PALETTES[paletteName];
         if (!palette) return;
-        
+
         els.paletteGrid.innerHTML = '';
+        els.paletteGrid.setAttribute('aria-label', `${paletteName} color palette`);
         for (const [name, color] of Object.entries(palette)) {
+            const safeColor = sanitizeColor(color, null);
+            if (!safeColor) {
+                continue;
+            }
+
             const swatch = document.createElement('div');
             swatch.className = 'palette-swatch';
-            swatch.style.backgroundColor = color;
-            swatch.dataset.color = color;
+            swatch.tabIndex = 0;
+            swatch.setAttribute('role', 'button');
+            swatch.setAttribute('aria-label', `${name} color swatch`);
+            swatch.title = `${name} (${safeColor})`;
+            swatch.style.backgroundColor = safeColor;
+            swatch.dataset.color = safeColor;
             swatch.dataset.tooltip = name;
             els.paletteGrid.appendChild(swatch);
         }
     }
 
+    function applyPaletteSwatchToGradient(swatch) {
+        if (!swatch || !gradient.stops.length) {
+            return;
+        }
+
+        const color = sanitizeColor(swatch.dataset.color, null);
+        if (!color) {
+            return;
+        }
+
+        const index = Math.min(Math.max(activeStopIndex, 0), gradient.stops.length - 1);
+        gradient.stops[index].color = color;
+        renderStops();
+        updatePreview();
+        saveState();
+    }
+
     function showToast(message, timeout = 2000) {
         const toast = document.createElement('div');
         toast.className = 'toast';
+        toast.setAttribute('role', 'alert');
         toast.textContent = message;
         els.toastContainer.appendChild(toast);
         setTimeout(() => toast.classList.add('show'), 10);
@@ -218,85 +360,171 @@
 
         // Type tabs
         els.typeTabs.addEventListener('click', e => {
-            if (e.target.matches('.tab-btn')) {
-                gradient.type = e.target.id.replace('type-', '');
-                activeStopIndex = 0;
-                syncUIFromState();
-                updatePreview();
-                saveState();
+            const tab = e.target.closest('.tab-btn');
+            if (!tab) {
+                return;
             }
+
+            const newType = tab.id.replace('type-', '');
+            if (!GRADIENT_TYPES.has(newType)) {
+                return;
+            }
+
+            gradient.type = newType;
+            if (newType !== 'radial') {
+                gradient.shape = 'ellipse';
+            }
+            activeStopIndex = 0;
+            syncUIFromState();
+            updatePreview();
+            saveState();
         });
 
         // Angle controls
         els.angleSlider.addEventListener('input', () => {
-            gradient.angle = els.angleSlider.value;
-            els.angleInput.value = els.angleSlider.value;
+            const value = clampNumber(els.angleSlider.value, 0, 360, gradient.angle);
+            gradient.angle = value;
+            const normalized = String(value);
+            els.angleSlider.value = normalized;
+            els.angleInput.value = normalized;
             updatePreview();
             debouncedSave();
         });
 
         els.angleInput.addEventListener('input', () => {
-            gradient.angle = els.angleInput.value;
-            els.angleSlider.value = els.angleInput.value;
+            const value = clampNumber(els.angleInput.value, 0, 360, null);
+            if (value === null) {
+                els.angleInput.value = String(gradient.angle);
+                return;
+            }
+            gradient.angle = value;
+            const normalized = String(value);
+            els.angleSlider.value = normalized;
+            els.angleInput.value = normalized;
             updatePreview();
             debouncedSave();
         });
 
         // Effect controls
         els.blurSlider.addEventListener('input', () => {
-            gradient.blur = els.blurSlider.value;
-            els.blurInput.value = els.blurSlider.value;
+            const value = clampNumber(els.blurSlider.value, 0, 40, gradient.blur);
+            gradient.blur = value;
+            const normalized = String(value);
+            els.blurSlider.value = normalized;
+            els.blurInput.value = normalized;
             updatePreview();
             debouncedSave();
         });
 
         els.blurInput.addEventListener('input', () => {
-            gradient.blur = els.blurInput.value;
-            els.blurSlider.value = els.blurInput.value;
+            const value = clampNumber(els.blurInput.value, 0, 40, null);
+            if (value === null) {
+                els.blurInput.value = String(gradient.blur);
+                return;
+            }
+            gradient.blur = value;
+            const normalized = String(value);
+            els.blurSlider.value = normalized;
+            els.blurInput.value = normalized;
             updatePreview();
             debouncedSave();
         });
 
         els.noiseSlider.addEventListener('input', () => {
-            gradient.noise = els.noiseSlider.value;
-            els.noiseInput.value = els.noiseSlider.value;
+            const value = clampNumber(els.noiseSlider.value, 0, 100, gradient.noise);
+            gradient.noise = value;
+            const normalized = String(value);
+            els.noiseSlider.value = normalized;
+            els.noiseInput.value = normalized;
             updatePreview();
             debouncedSave();
         });
 
         els.noiseInput.addEventListener('input', () => {
-            gradient.noise = els.noiseInput.value;
-            els.noiseSlider.value = els.noiseInput.value;
+            const value = clampNumber(els.noiseInput.value, 0, 100, null);
+            if (value === null) {
+                els.noiseInput.value = String(gradient.noise);
+                return;
+            }
+            gradient.noise = value;
+            const normalized = String(value);
+            els.noiseSlider.value = normalized;
+            els.noiseInput.value = normalized;
             updatePreview();
             debouncedSave();
         });
 
         // Stops management
+        if (els.distributeStopsBtn) {
+            els.distributeStopsBtn.addEventListener('click', () => {
+                distributeStopsEvenly();
+            });
+        }
+
+        if (els.reverseStopsBtn) {
+            els.reverseStopsBtn.addEventListener('click', () => {
+                reverseGradientStops();
+            });
+        }
+
         els.addStopBtn.addEventListener('click', addStop);
 
         els.stopsContainer.addEventListener('input', e => {
-            const index = parseInt(e.target.dataset.index);
-            if (isNaN(index)) return;
-            
+            const target = e.target;
+            if (!target || !target.classList) {
+                return;
+            }
+
+            const index = Number.parseInt(target.dataset.index, 10);
+            if (!Number.isInteger(index) || !gradient.stops[index]) {
+                return;
+            }
+
             activeStopIndex = index;
-            
-            if (e.target.matches('.stop-color-input, .stop-hex-input')) {
-                gradient.stops[index].color = e.target.value;
-                
-                // Sync color and hex inputs
-                const colorInput = e.target.matches('.stop-color-input') ? 
-                    e.target : e.target.previousElementSibling;
-                const hexInput = e.target.matches('.stop-hex-input') ? 
-                    e.target : e.target.nextElementSibling;
-                    
-                colorInput.value = e.target.value;
-                hexInput.value = e.target.value;
-                
+            const parentRow = target.closest('.stop-row');
+
+            if (target.classList.contains('stop-color-input')) {
+                const sanitizedColor = sanitizeColor(target.value, gradient.stops[index].color);
+                gradient.stops[index].color = sanitizedColor;
+                if (parentRow) {
+                    const hexInput = parentRow.querySelector('.stop-hex-input');
+                    if (hexInput) {
+                        hexInput.value = sanitizedColor;
+                        hexInput.classList.remove('invalid');
+                        hexInput.removeAttribute('aria-invalid');
+                    }
+                }
                 updatePreview();
                 debouncedSave();
-            } else if (e.target.matches('.stop-pos-slider')) {
-                gradient.stops[index].pos = parseInt(e.target.value);
-                e.target.nextElementSibling.textContent = `${e.target.value}%`;
+            } else if (target.classList.contains('stop-hex-input')) {
+                const sanitizedHex = sanitizeColor(target.value, null);
+                if (!sanitizedHex) {
+                    target.classList.add('invalid');
+                    target.setAttribute('aria-invalid', 'true');
+                    return;
+                }
+                gradient.stops[index].color = sanitizedHex;
+                target.value = sanitizedHex;
+                target.classList.remove('invalid');
+                target.removeAttribute('aria-invalid');
+                if (parentRow) {
+                    const colorInput = parentRow.querySelector('.stop-color-input');
+                    if (colorInput) {
+                        colorInput.value = sanitizedHex;
+                    }
+                }
+                updatePreview();
+                debouncedSave();
+            } else if (target.classList.contains('stop-pos-slider')) {
+                const sanitizedPos = clampNumber(target.value, 0, 100, gradient.stops[index].pos);
+                gradient.stops[index].pos = sanitizedPos;
+                target.value = String(sanitizedPos);
+                if (parentRow) {
+                    const label = parentRow.querySelector('.stop-pos-label');
+                    if (label) {
+                        label.textContent = `${sanitizedPos}%`;
+                    }
+                }
                 updatePreview();
                 debouncedReorderRenderSave();
             }
@@ -304,10 +532,16 @@
 
         els.stopsContainer.addEventListener('click', e => {
             const row = e.target.closest('.stop-row');
-            if (!row) return;
-            
-            const index = parseInt(row.dataset.index);
-            if (e.target.matches('.btn-remove-stop')) {
+            if (!row) {
+                return;
+            }
+
+            const index = Number.parseInt(row.dataset.index, 10);
+            if (!Number.isInteger(index) || !gradient.stops[index]) {
+                return;
+            }
+
+            if (e.target.closest('.btn-remove-stop')) {
                 removeStop(index);
             } else if (activeStopIndex !== index) {
                 activeStopIndex = index;
@@ -321,40 +555,115 @@
         });
 
         els.paletteGrid.addEventListener('click', e => {
-            if (e.target.matches('.palette-swatch')) {
-                gradient.stops[activeStopIndex].color = e.target.dataset.color;
-                renderStops();
-                updatePreview();
-                saveState();
+            const swatch = e.target.closest('.palette-swatch');
+            applyPaletteSwatchToGradient(swatch);
+        });
+
+        els.paletteGrid.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                const swatch = e.target.closest('.palette-swatch');
+                if (!swatch) {
+                    return;
+                }
+                e.preventDefault();
+                applyPaletteSwatchToGradient(swatch);
             }
         });
 
         // Presets
         els.presetsGrid.addEventListener('click', e => {
             const card = e.target.closest('.preset-card');
-            if (card) applyPreset(card.dataset.index);
+            if (!card) {
+                return;
+            }
+
+            const presetIndex = Number.parseInt(card.dataset.index, 10);
+            if (Number.isNaN(presetIndex)) {
+                return;
+            }
+
+            applyPreset(presetIndex);
         });
+
+        if (els.customPresetsGrid) {
+            els.customPresetsGrid.addEventListener('click', e => {
+                const targetButton = e.target.closest('button');
+                if (!targetButton) {
+                    return;
+                }
+
+                const index = Number.parseInt(targetButton.dataset.index, 10);
+                if (!Number.isInteger(index)) {
+                    return;
+                }
+
+                if (targetButton.classList.contains('preset-delete-btn')) {
+                    deleteCustomPreset(index);
+                } else if (targetButton.classList.contains('preset-card')) {
+                    applyPreset(index, customPresets);
+                }
+            });
+        }
+
+        if (els.savePresetBtn && els.savePresetModal && els.savePresetForm && els.savePresetNameInput) {
+            els.savePresetBtn.addEventListener('click', () => {
+                openSavePresetModal();
+            });
+
+            els.savePresetForm.addEventListener('submit', e => {
+                e.preventDefault();
+                handleSavePresetSubmission();
+            });
+
+            if (els.savePresetCancelBtn) {
+                els.savePresetCancelBtn.addEventListener('click', () => {
+                    closeSavePresetModal();
+                });
+            }
+
+            if (els.closeSavePresetBtn) {
+                els.closeSavePresetBtn.addEventListener('click', () => {
+                    closeSavePresetModal();
+                });
+            }
+
+            els.savePresetModal.addEventListener('cancel', () => {
+                closeSavePresetModal();
+            });
+        }
 
         // Action buttons
         els.randomizeBtn.addEventListener('click', randomizeGradient);
-        els.copyCssBtn.addEventListener('click', () => copyToClipboard(els.cssOutputEl.textContent));
+        els.copyCssBtn.addEventListener('click', () => copyToClipboard(els.cssOutputEl.textContent || ''));
         els.exportCssBtn.addEventListener('click', exportCssFile);
-        els.saveImageBtn.addEventListener('click', () => els.exportModal.showModal());
+        els.saveImageBtn.addEventListener('click', () => {
+            if (typeof els.exportModal.showModal === 'function') {
+                els.exportModal.showModal();
+            }
+        });
 
         // Modal
         els.closeModalBtn.addEventListener('click', () => els.exportModal.close());
         els.cancelExportBtn.addEventListener('click', () => els.exportModal.close());
         els.confirmExportBtn.addEventListener('click', () => {
-            const format = els.exportModal.querySelector('input[name="format"]:checked').value;
-            const resKey = els.exportModal.querySelector('input[name="resolution"]:checked').value;
-            const { width, height } = RESOLUTIONS[resKey];
-            
-            if (format === 'svg') {
-                exportAsSVG(width, height);
-            } else {
-                exportAsRaster(format, width, height);
+            const formatInput = els.exportModal.querySelector('input[name="format"]:checked');
+            const resolutionInput = els.exportModal.querySelector('input[name="resolution"]:checked');
+            if (!formatInput || !resolutionInput) {
+                return;
             }
-            
+
+            const format = formatInput.value;
+            const resolution = RESOLUTIONS[resolutionInput.value];
+            if (!resolution) {
+                return;
+            }
+
+            if (format === 'svg') {
+                exportAsSVG(resolution.width, resolution.height);
+            } else if (format === 'png' || format === 'jpg') {
+                exportAsRaster(format, resolution.width, resolution.height);
+            }
+
             els.exportModal.close();
         });
     }
@@ -364,125 +673,401 @@
     // ===================================================================
     function saveState() {
         try {
-            localStorage.setItem('gradient-state', JSON.stringify(gradient));
+            const safeGradient = sanitizeGradientState(gradient);
+            localStorage.setItem('gradient-state', JSON.stringify(safeGradient));
         } catch (e) {
-            console.error("Error saving state:", e);
+            console.error('Error saving state:', e);
         }
     }
 
     function loadState() {
         const saved = localStorage.getItem('gradient-state');
-        if (saved) {
-            try {
-                const parsed = JSON.parse(saved);
-                if (parsed && parsed.stops) {
-                    Object.assign(gradient, parsed);
-                }
-            } catch (e) {
-                console.error("Error loading state:", e);
-            }
+        if (!saved) {
+            return;
+        }
+
+        try {
+            const parsed = JSON.parse(saved);
+            applySanitizedState(gradient, parsed);
+            activeStopIndex = Math.min(activeStopIndex, gradient.stops.length - 1);
+        } catch (e) {
+            console.error('Error loading state:', e);
         }
     }
 
-    function applyPreset(index) {
-        const preset = JSON.parse(JSON.stringify(presets[index]));
-        if (preset) {
-            gradient.type = preset.type || 'linear';
-            gradient.angle = preset.angle || 90;
-            gradient.shape = preset.shape || 'ellipse';
-            gradient.stops = preset.stops || [];
-            gradient.blur = 0;
-            gradient.noise = 0;
-            activeStopIndex = 0;
-            syncUIFromState();
-            updatePreview();
-            saveState();
+    function loadCustomPresets() {
+        const stored = localStorage.getItem(CUSTOM_PRESETS_STORAGE_KEY);
+        if (!stored) {
+            return [];
+        }
+
+        try {
+            const parsed = JSON.parse(stored);
+            if (!Array.isArray(parsed)) {
+                return [];
+            }
+
+            const seenNames = new Set();
+
+            return parsed
+                .map((entry, index) => {
+                    if (!entry || typeof entry !== 'object') {
+                        return null;
+                    }
+
+                    const fallbackName = `Custom Preset ${index + 1}`;
+                    let sanitizedName = sanitizePresetName(entry.name) || fallbackName;
+                    const baseName = sanitizedName;
+                    let suffix = 2;
+                    while (seenNames.has(sanitizedName.toLowerCase())) {
+                        sanitizedName = `${baseName} ${suffix}`;
+                        suffix += 1;
+                    }
+                    seenNames.add(sanitizedName.toLowerCase());
+
+                    const sanitizedGradient = sanitizeGradientState(entry);
+                    return { ...sanitizedGradient, name: sanitizedName };
+                })
+                .filter(Boolean)
+                .slice(0, MAX_CUSTOM_PRESETS);
+        } catch (error) {
+            console.error('Error loading custom presets:', error);
+            return [];
+        }
+    }
+
+    function saveCustomPresets() {
+        try {
+            const payload = customPresets.map(preset => ({
+                name: preset.name,
+                type: preset.type,
+                angle: preset.angle,
+                shape: preset.shape,
+                stops: preset.stops.map(stop => ({ ...stop })),
+                blur: preset.blur,
+                noise: preset.noise
+            }));
+            localStorage.setItem(CUSTOM_PRESETS_STORAGE_KEY, JSON.stringify(payload));
+            return true;
+        } catch (error) {
+            console.error('Error saving custom presets:', error);
+            return false;
+        }
+    }
+
+    function applyPreset(index, collection = presets) {
+        const source = Array.isArray(collection) ? collection : presets;
+        const preset = source[index];
+        if (!preset) {
+            return;
+        }
+
+        const sanitizedPreset = sanitizeGradientState(preset);
+        if (source === presets) {
+            sanitizedPreset.blur = 0;
+            sanitizedPreset.noise = 0;
+        }
+
+        applySanitizedState(gradient, sanitizedPreset);
+        activeStopIndex = 0;
+        syncUIFromState();
+        updatePreview();
+        saveState();
+
+        if (source === customPresets) {
+            showToast('Custom preset applied!');
         }
     }
 
     function randomizeGradient() {
-        gradient.type = ['linear', 'radial', 'conic'][Math.floor(Math.random() * 3)];
-        gradient.angle = Math.floor(Math.random() * 361);
-        
+        const types = Array.from(GRADIENT_TYPES);
+        const randomType = types[Math.floor(Math.random() * types.length)] || 'linear';
         const count = Math.floor(Math.random() * 3) + 3;
-        gradient.stops = Array.from({ length: count }, (_, i) => ({
-            color: '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0'),
-            pos: Math.round((i / (count - 1)) * 100)
+        const stops = Array.from({ length: count }, (_, i) => ({
+            color: `#${Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0').toUpperCase()}`,
+            pos: Math.round((i / Math.max(count - 1, 1)) * 100)
         }));
-        
-        gradient.blur = 0;
-        gradient.noise = 0;
+
+        applySanitizedState(gradient, {
+            type: randomType,
+            angle: Math.floor(Math.random() * 361),
+            shape: 'ellipse',
+            stops,
+            blur: 0,
+            noise: 0
+        });
         activeStopIndex = 0;
-        
+
         syncUIFromState();
         updatePreview();
         saveState();
-        showToast("Gradient Randomized!");
+        showToast('Gradient Randomized!');
     }
 
     function addStop() {
-        gradient.stops.push({ color: '#ffffff', pos: 50 });
+        const newStop = { color: '#FFFFFF', pos: 50 };
+        gradient.stops.push(newStop);
         reorderStops();
-        activeStopIndex = gradient.stops.length - 1;
+        activeStopIndex = gradient.stops.indexOf(newStop);
+        if (activeStopIndex === -1) {
+            activeStopIndex = gradient.stops.length - 1;
+        }
         renderStops();
         updatePreview();
         saveState();
     }
 
     function removeStop(index) {
-        if (gradient.stops.length <= 2) {
-            showToast("Minimum of 2 stops is required.");
+        if (!Number.isInteger(index) || index < 0 || index >= gradient.stops.length) {
             return;
         }
-        
-        gradient.stops.splice(index, 1);
-        if (activeStopIndex >= index) {
-            activeStopIndex = Math.max(0, activeStopIndex - 1);
+
+        if (gradient.stops.length <= 2) {
+            showToast('Minimum of 2 stops is required.');
+            return;
         }
-        
+
+        gradient.stops.splice(index, 1);
+        if (activeStopIndex >= gradient.stops.length) {
+            activeStopIndex = gradient.stops.length - 1;
+        } else if (activeStopIndex > index) {
+            activeStopIndex -= 1;
+        }
+        activeStopIndex = Math.max(0, activeStopIndex);
+
         renderStops();
         updatePreview();
         saveState();
     }
 
+    function reverseGradientStops() {
+        const sanitized = sanitizeGradientState(gradient);
+        if (sanitized.stops.length < 2) {
+            showToast('Add at least two stops to reverse.');
+            return;
+        }
+
+        const previousIndex = Math.min(Math.max(activeStopIndex, 0), sanitized.stops.length - 1);
+        const reversedStops = sanitized.stops
+            .slice()
+            .reverse()
+            .map(stop => ({
+                color: stop.color,
+                pos: 100 - stop.pos
+            }))
+            .sort((a, b) => a.pos - b.pos);
+
+        applySanitizedState(gradient, sanitized);
+        gradient.stops = reversedStops;
+        const totalStops = gradient.stops.length;
+        activeStopIndex = Math.max(0, totalStops - 1 - previousIndex);
+
+        renderStops();
+        updatePreview();
+        saveState();
+        showToast('Gradient reversed.');
+    }
+
+    function distributeStopsEvenly() {
+        const sanitized = sanitizeGradientState(gradient);
+        if (sanitized.stops.length < 2) {
+            showToast('Add at least two stops to distribute.');
+            return;
+        }
+
+        applySanitizedState(gradient, sanitized);
+        const segments = gradient.stops.length - 1;
+        if (segments <= 0) {
+            return;
+        }
+
+        gradient.stops.forEach((stop, index) => {
+            stop.pos = Math.round((index / segments) * 100);
+        });
+
+        renderStops();
+        updatePreview();
+        saveState();
+        showToast('Stops distributed evenly.');
+    }
+
     function reorderStops() {
+        gradient.stops.forEach(stop => {
+            stop.color = sanitizeColor(stop.color, '#FFFFFF') || '#FFFFFF';
+            stop.pos = clampNumber(stop.pos, 0, 100, 0);
+        });
         gradient.stops.sort((a, b) => a.pos - b.pos);
+    }
+
+    // ===================================================================
+    // CUSTOM PRESETS
+    // ===================================================================
+    function openSavePresetModal() {
+        if (!els.savePresetModal || typeof els.savePresetModal.showModal !== 'function') {
+            return;
+        }
+
+        if (els.savePresetNameInput) {
+            const suggestion = generateSuggestedPresetName();
+            els.savePresetNameInput.value = suggestion;
+            els.savePresetNameInput.classList.remove('invalid');
+            els.savePresetNameInput.removeAttribute('aria-invalid');
+            setTimeout(() => {
+                els.savePresetNameInput.focus();
+                els.savePresetNameInput.select();
+            }, 50);
+        }
+
+        els.savePresetModal.showModal();
+    }
+
+    function closeSavePresetModal() {
+        if (els.savePresetModal && typeof els.savePresetModal.close === 'function' && els.savePresetModal.open) {
+            els.savePresetModal.close();
+        }
+
+        if (els.savePresetNameInput) {
+            els.savePresetNameInput.value = '';
+            els.savePresetNameInput.classList.remove('invalid');
+            els.savePresetNameInput.removeAttribute('aria-invalid');
+        }
+    }
+
+    function handleSavePresetSubmission() {
+        if (!els.savePresetNameInput) {
+            return;
+        }
+
+        els.savePresetNameInput.classList.remove('invalid');
+        els.savePresetNameInput.removeAttribute('aria-invalid');
+
+        const sanitizedName = sanitizePresetName(els.savePresetNameInput.value);
+        if (!sanitizedName) {
+            els.savePresetNameInput.classList.add('invalid');
+            els.savePresetNameInput.setAttribute('aria-invalid', 'true');
+            els.savePresetNameInput.focus();
+            return;
+        }
+
+        const uniqueName = ensureUniquePresetName(sanitizedName);
+        const preset = createCustomPreset(uniqueName, gradient);
+        if (!preset) {
+            els.savePresetNameInput.classList.add('invalid');
+            els.savePresetNameInput.setAttribute('aria-invalid', 'true');
+            return;
+        }
+
+        customPresets.unshift(preset);
+        while (customPresets.length > MAX_CUSTOM_PRESETS) {
+            customPresets.pop();
+        }
+
+        const persisted = saveCustomPresets();
+        renderCustomPresets();
+        closeSavePresetModal();
+        showToast(persisted ? 'Preset saved to this device.' : 'Preset saved for now (storage unavailable).');
+    }
+
+    function createCustomPreset(name, sourceGradient) {
+        const sanitizedName = sanitizePresetName(name);
+        if (!sanitizedName) {
+            return null;
+        }
+
+        const sanitizedGradient = sanitizeGradientState(sourceGradient);
+        return {
+            ...sanitizedGradient,
+            name: sanitizedName
+        };
+    }
+
+    function ensureUniquePresetName(baseName) {
+        const normalized = baseName.trim();
+        if (!normalized) {
+            return generateSuggestedPresetName();
+        }
+
+        const existingNames = new Set(customPresets.map(preset => (
+            typeof preset.name === 'string' ? preset.name.toLowerCase() : ''
+        )));
+
+        if (!existingNames.has(normalized.toLowerCase())) {
+            return normalized;
+        }
+
+        let counter = 2;
+        let candidate = `${normalized} ${counter}`;
+        while (existingNames.has(candidate.toLowerCase())) {
+            counter += 1;
+            candidate = `${normalized} ${counter}`;
+        }
+        return candidate;
+    }
+
+    function generateSuggestedPresetName() {
+        const base = 'Custom Preset';
+        const existingNames = new Set(customPresets.map(preset => (
+            typeof preset.name === 'string' ? preset.name.toLowerCase() : ''
+        )));
+
+        let counter = customPresets.length + 1;
+        let candidate = `${base} ${counter}`;
+        while (existingNames.has(candidate.toLowerCase())) {
+            counter += 1;
+            candidate = `${base} ${counter}`;
+        }
+        return candidate;
+    }
+
+    function deleteCustomPreset(index) {
+        if (!Number.isInteger(index) || index < 0 || index >= customPresets.length) {
+            return;
+        }
+
+        customPresets.splice(index, 1);
+        const persisted = saveCustomPresets();
+        renderCustomPresets();
+        showToast(persisted ? 'Preset removed.' : 'Preset removed (storage unavailable).');
     }
 
     // ===================================================================
     // GENERATION & EXPORT
     // ===================================================================
     function generateGradientCSS(g) {
-        const stopsStr = g.stops.map(s => `${s.color} ${s.pos}%`).join(', ');
-        
-        switch (g.type) {
+        const safeGradient = sanitizeGradientState(g);
+        const stopsStr = safeGradient.stops.map(s => `${s.color} ${s.pos}%`).join(', ');
+
+        switch (safeGradient.type) {
             case 'radial':
-                return `background: radial-gradient(${g.shape}, ${stopsStr});`;
+                return `background: radial-gradient(${safeGradient.shape}, ${stopsStr});`;
             case 'conic':
-                return `background: conic-gradient(from ${g.angle}deg, ${stopsStr});`;
+                return `background: conic-gradient(from ${safeGradient.angle}deg, ${stopsStr});`;
             default:
-                return `background: linear-gradient(${g.angle}deg, ${stopsStr});`;
+                return `background: linear-gradient(${safeGradient.angle}deg, ${stopsStr});`;
         }
     }
 
     function generateSVGString(g, w, h) {
-        const stopsSVG = g.stops.map(s => 
+        const safeGradient = sanitizeGradientState(g);
+        const widthValue = toSafeDimension(w, 1920);
+        const heightValue = toSafeDimension(h, 1080);
+        const stopsSVG = safeGradient.stops.map(s =>
             `<stop offset="${s.pos}%" stop-color="${s.color}" />`
         ).join('');
-        
+
         let gradientTag;
-        if (g.type === 'linear') {
-            gradientTag = `<linearGradient id="g" gradientTransform="rotate(${g.angle - 90})">${stopsSVG}</linearGradient>`;
-        } else if (g.type === 'radial') {
+        if (safeGradient.type === 'linear') {
+            gradientTag = `<linearGradient id="g" gradientTransform="rotate(${safeGradient.angle - 90})">${stopsSVG}</linearGradient>`;
+        } else if (safeGradient.type === 'radial') {
             gradientTag = `<radialGradient id="g" cx="50%" cy="50%" r="50%">${stopsSVG}</radialGradient>`;
         } else {
             // Conic gradient approximation for SVG
             gradientTag = `<linearGradient id="g">${stopsSVG}</linearGradient>`;
         }
-        
-        return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+
+        return `<svg xmlns="http://www.w3.org/2000/svg" width="${widthValue}" height="${heightValue}" viewBox="0 0 ${widthValue} ${heightValue}">
             <defs>${gradientTag}</defs>
-            <rect width="${w}" height="${h}" fill="url(#g)" />
+            <rect width="${widthValue}" height="${heightValue}" fill="url(#g)" />
         </svg>`;
     }
 
@@ -490,72 +1075,97 @@
         const svgString = generateSVGString(gradient, width, height);
         const blob = new Blob([svgString], { type: 'image/svg+xml' });
         const url = URL.createObjectURL(blob);
-        
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'gradient.svg';
-        a.click();
-        
+
+        triggerDownload(url, 'gradient.svg');
         URL.revokeObjectURL(url);
         showToast('Image exported as SVG!');
     }
 
     function exportAsRaster(format, width, height) {
-        const svgString = generateSVGString(gradient, width, height);
+        const safeFormat = format === 'jpg' ? 'jpg' : 'png';
+        const safeGradient = sanitizeGradientState(gradient);
+        const widthValue = toSafeDimension(width, RESOLUTIONS['1080p'].width);
+        const heightValue = toSafeDimension(height, RESOLUTIONS['1080p'].height);
+        const svgString = generateSVGString(safeGradient, widthValue, heightValue);
         const blob = new Blob([svgString], { type: 'image/svg+xml' });
         const url = URL.createObjectURL(blob);
-        
+
         const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
+        canvas.width = widthValue;
+        canvas.height = heightValue;
         const ctx = canvas.getContext('2d');
-        
-        const img = new Image();
-        img.onload = () => {
-            // Apply blur if needed
-            if (gradient.blur > 0) {
-                ctx.filter = `blur(${gradient.blur}px)`;
-            }
-            
-            ctx.drawImage(img, 0, 0, width, height);
-            ctx.filter = 'none';
-            
+        if (!ctx) {
             URL.revokeObjectURL(url);
-            
-            // Apply noise if needed
-            if (gradient.noise > 0) {
-                drawNoise(ctx, width, height, gradient.noise);
+            showToast('Canvas not supported in this browser.');
+            return;
+        }
+
+        const img = new Image();
+        img.decoding = 'async';
+        img.onload = () => {
+            if (safeGradient.blur > 0) {
+                ctx.filter = `blur(${safeGradient.blur}px)`;
             }
-            
-            // Convert to desired format
-            canvas.toBlob(blob => {
-                const dataUrl = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = dataUrl;
-                a.download = `gradient.${format}`;
-                a.click();
-                URL.revokeObjectURL(dataUrl);
-                showToast(`Image exported as ${format.toUpperCase()}!`);
-            }, `image/${format}`, format === 'jpg' ? 0.9 : 1.0);
+
+            ctx.drawImage(img, 0, 0, widthValue, heightValue);
+            ctx.filter = 'none';
+
+            URL.revokeObjectURL(url);
+
+            if (safeGradient.noise > 0) {
+                drawNoise(ctx, widthValue, heightValue, safeGradient.noise);
+            }
+
+            const mime = safeFormat === 'jpg' ? 'image/jpeg' : 'image/png';
+            const quality = safeFormat === 'jpg' ? 0.9 : 1.0;
+
+            const finalizeDownload = (data, isObjectUrl) => {
+                triggerDownload(data, `gradient.${safeFormat}`);
+                if (isObjectUrl) {
+                    URL.revokeObjectURL(data);
+                }
+                showToast(`Image exported as ${safeFormat.toUpperCase()}!`);
+            };
+
+            if (canvas.toBlob) {
+                canvas.toBlob(result => {
+                    if (result) {
+                        const objectUrl = URL.createObjectURL(result);
+                        finalizeDownload(objectUrl, true);
+                    } else {
+                        finalizeDownload(canvas.toDataURL(mime, quality), false);
+                    }
+                }, mime, quality);
+            } else {
+                finalizeDownload(canvas.toDataURL(mime, quality), false);
+            }
         };
-        
+
         img.onerror = () => {
             URL.revokeObjectURL(url);
-            showToast("Error creating image.");
+            showToast('Error creating image.');
         };
-        
+
         img.src = url;
     }
 
     function drawNoise(ctx, w, h, opacity) {
+        const safeOpacity = clampNumber(opacity, 0, 100, 0);
+        if (safeOpacity <= 0) {
+            return;
+        }
+
         const noiseCanvas = document.createElement('canvas');
         noiseCanvas.width = 100;
         noiseCanvas.height = 100;
         const noiseCtx = noiseCanvas.getContext('2d');
-        
+        if (!noiseCtx) {
+            return;
+        }
+
         const imageData = noiseCtx.createImageData(100, 100);
         const data = imageData.data;
-        
+
         for (let i = 0; i < data.length; i += 4) {
             const val = Math.floor(Math.random() * 255);
             data[i] = val;
@@ -563,34 +1173,56 @@
             data[i + 2] = val;
             data[i + 3] = 255;
         }
-        
+
         noiseCtx.putImageData(imageData, 0, 0);
-        
-        ctx.globalAlpha = opacity / 100;
-        ctx.fillStyle = ctx.createPattern(noiseCanvas, 'repeat');
+
+        const pattern = ctx.createPattern(noiseCanvas, 'repeat');
+        if (!pattern) {
+            return;
+        }
+
+        ctx.save();
+        ctx.globalAlpha = safeOpacity / 100;
+        ctx.fillStyle = pattern;
         ctx.fillRect(0, 0, w, h);
-        ctx.globalAlpha = 1.0;
+        ctx.restore();
     }
 
     async function copyToClipboard(text) {
+        const safeText = typeof text === 'string' ? text : '';
+        if (!safeText) {
+            showToast('Nothing to copy.');
+            return;
+        }
+
         try {
-            await navigator.clipboard.writeText(text);
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(safeText);
+            } else {
+                const textarea = document.createElement('textarea');
+                textarea.value = safeText;
+                textarea.setAttribute('readonly', '');
+                textarea.style.position = 'absolute';
+                textarea.style.left = '-9999px';
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+            }
             showToast('CSS copied!');
         } catch (err) {
+            console.error('Clipboard error:', err);
             showToast('Failed to copy.');
         }
     }
 
     function exportCssFile() {
-        const content = `.generated-gradient {\n    ${generateGradientCSS(gradient)}\n}`;
+        const safeGradient = sanitizeGradientState(gradient);
+        const content = `.generated-gradient {\n    ${generateGradientCSS(safeGradient)}\n}`;
         const blob = new Blob([content], { type: 'text/css' });
         const url = URL.createObjectURL(blob);
-        
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'gradient.css';
-        a.click();
-        
+
+        triggerDownload(url, 'gradient.css');
         URL.revokeObjectURL(url);
         showToast('CSS file exported!');
     }
@@ -607,7 +1239,7 @@
     }
 
     function getDefaultPresets() {
-        return [
+        const presetsList = [
             {
                 name: 'Ocean Blue',
                 type: 'linear',
@@ -651,8 +1283,8 @@
                 type: 'conic',
                 angle: 180,
                 stops: [
-                    { color: '#a1c4fd', pos: 0 },
-                    { color: '#c2e9fb', pos: 100 }
+                    { color: '#A1C4FD', pos: 0 },
+                    { color: '#C2E9FB', pos: 100 }
                 ]
             },
             {
@@ -666,15 +1298,31 @@
                 ]
             }
         ];
+
+        return presetsList.map(preset => sanitizeGradientState(preset));
     }
 
-    function ensureReadableTextColorOnPreview() {
-        const midStop = gradient.stops[Math.floor(gradient.stops.length / 2)];
-        if (!midStop) return;
-        
-        const bgColor = hexToRgb(midStop.color);
-        if (!bgColor) return;
-        
+    function ensureReadableTextColorOnPreview(currentGradient = gradient) {
+        if (!currentGradient || !Array.isArray(currentGradient.stops) || !currentGradient.stops.length) {
+            return;
+        }
+
+        const stops = currentGradient.stops;
+        const midStop = stops[Math.floor(stops.length / 2)];
+        if (!midStop) {
+            return;
+        }
+
+        const sanitizedColor = sanitizeColor(midStop.color, null);
+        if (!sanitizedColor) {
+            return;
+        }
+
+        const bgColor = hexToRgb(sanitizedColor);
+        if (!bgColor) {
+            return;
+        }
+
         const lum = relativeLuminance(bgColor);
         els.previewLabel.style.color = (lum > 0.4) ? '#000000' : '#FFFFFF';
     }
@@ -694,6 +1342,172 @@
             return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
         });
         return a[0] * 0.2126 + a[1] * 0.7152 + a[2] * 0.0722;
+    }
+
+    // ===================================================================
+    // SANITIZATION & DOWNLOAD HELPERS
+    // ===================================================================
+    function createDefaultGradientState() {
+        return {
+            type: 'linear',
+            angle: 90,
+            shape: 'ellipse',
+            stops: [
+                { color: '#2B8EFB', pos: 0 },
+                { color: '#1FC8A1', pos: 100 }
+            ],
+            blur: 0,
+            noise: 0
+        };
+    }
+
+    function normalizeHex(value) {
+        if (typeof value !== 'string') {
+            return null;
+        }
+
+        let normalized = value.trim();
+        if (!normalized) {
+            return null;
+        }
+
+        if (!normalized.startsWith('#')) {
+            normalized = `#${normalized}`;
+        }
+
+        if (!HEX_COLOR_REGEX.test(normalized)) {
+            return null;
+        }
+
+        if (normalized.length === 4) {
+            normalized = `#${normalized[1]}${normalized[1]}${normalized[2]}${normalized[2]}${normalized[3]}${normalized[3]}`;
+        }
+
+        return normalized.toUpperCase();
+    }
+
+    function sanitizeColor(value, fallback = null) {
+        return normalizeHex(value) ?? normalizeHex(fallback);
+    }
+
+    function sanitizePresetName(value) {
+        if (typeof value !== 'string') {
+            return null;
+        }
+
+        let normalized = value.trim();
+        if (!normalized) {
+            return null;
+        }
+
+        try {
+            normalized = normalized.normalize('NFKC');
+        } catch (error) {
+            // Ignore environments that do not support String.normalize
+        }
+
+        normalized = normalized
+            .replace(/[^\p{L}\p{N}\s\-_]/gu, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        if (!normalized) {
+            return null;
+        }
+
+        return normalized.slice(0, 40);
+    }
+
+    function clampNumber(value, min, max, fallback = null) {
+        if (typeof value === 'string' && value.trim() === '') {
+            return fallback;
+        }
+
+        const num = Number(value);
+        if (!Number.isFinite(num)) {
+            return fallback;
+        }
+
+        const clamped = Math.min(max, Math.max(min, num));
+        return Math.round(clamped);
+    }
+
+    function sanitizeStop(stop, fallbackStop) {
+        const baseStop = fallbackStop || { color: '#FFFFFF', pos: 0 };
+        if (!stop || typeof stop !== 'object') {
+            return { color: baseStop.color, pos: baseStop.pos };
+        }
+
+        const color = sanitizeColor(stop.color, baseStop.color) || baseStop.color;
+        const pos = clampNumber(stop.pos, 0, 100, baseStop.pos);
+        return { color, pos };
+    }
+
+    function sanitizeGradientState(state) {
+        const base = createDefaultGradientState();
+        if (!state || typeof state !== 'object') {
+            return createDefaultGradientState();
+        }
+
+        const sanitized = {
+            type: GRADIENT_TYPES.has(state.type) ? state.type : base.type,
+            angle: clampNumber(state.angle, 0, 360, base.angle),
+            shape: base.shape,
+            stops: [],
+            blur: clampNumber(state.blur, 0, 40, base.blur),
+            noise: clampNumber(state.noise, 0, 100, base.noise)
+        };
+
+        if (sanitized.type === 'radial' && state.shape === 'circle') {
+            sanitized.shape = 'circle';
+        }
+
+        const stopsSource = Array.isArray(state.stops) ? state.stops : [];
+        sanitized.stops = stopsSource
+            .map((stop, index) => sanitizeStop(stop, base.stops[index % base.stops.length]))
+            .filter(Boolean);
+
+        if (sanitized.stops.length < 2) {
+            sanitized.stops = base.stops.map(stop => ({ ...stop }));
+        }
+
+        sanitized.stops.sort((a, b) => a.pos - b.pos);
+
+        return sanitized;
+    }
+
+    function applySanitizedState(target, rawState) {
+        const sanitized = sanitizeGradientState(rawState);
+        target.type = sanitized.type;
+        target.angle = sanitized.angle;
+        target.shape = sanitized.shape;
+        target.stops = sanitized.stops.map(stop => ({ ...stop }));
+        target.blur = sanitized.blur;
+        target.noise = sanitized.noise;
+        return target;
+    }
+
+    function toSafeDimension(value, fallback) {
+        const num = Number(value);
+        if (Number.isFinite(num) && num > 0) {
+            return Math.min(10000, Math.round(num));
+        }
+        const fallbackNum = Number(fallback);
+        if (Number.isFinite(fallbackNum) && fallbackNum > 0) {
+            return Math.min(10000, Math.round(fallbackNum));
+        }
+        return 1000;
+    }
+
+    function triggerDownload(url, filename) {
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = filename;
+        anchor.rel = 'noopener noreferrer';
+        anchor.style.display = 'none';
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
     }
 
     // Initialize when DOM is ready
